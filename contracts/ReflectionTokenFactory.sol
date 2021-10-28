@@ -3,16 +3,22 @@
 pragma solidity ^0.7.6;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/TokenTimelock.sol";
 import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
 import "./IOwnable.sol";
 import "./ITimelockFactory.sol";
+import "./ITokenTimelockFactory.sol";
 import "./IVaultFactory.sol";
 import "./ReflectionToken.sol";
-import "hardhat/console.sol";
 
 contract ReflectionTokenFactory is Ownable {
+    using SafeMath for uint;
+    using SafeERC20 for IERC20;
+    using SafeERC20 for ReflectionToken;
+
+    ITokenTimelockFactory public immutable tokenTimelockFactory;
     ITimelockFactory public immutable timelockFactory;
     IVaultFactory public immutable vaultFactory;
     IUniswapV2Router02 public immutable router;
@@ -28,6 +34,7 @@ contract ReflectionTokenFactory is Ownable {
     event CreateToken(address token, address deployer);
 
     constructor(
+        address _tokenTimelockFactoryAddress,
         address _timelockFactoryAddress,
         address _vaultFactoryAddress,
         address _routerAddress,
@@ -36,6 +43,7 @@ contract ReflectionTokenFactory is Ownable {
         uint _feeAmount,
         uint _minValue
     ) {
+        tokenTimelockFactory = ITokenTimelockFactory(_tokenTimelockFactoryAddress);
         timelockFactory = ITimelockFactory(_timelockFactoryAddress);
         vaultFactory = IVaultFactory(_vaultFactoryAddress);
         router = IUniswapV2Router02(_routerAddress);
@@ -73,7 +81,7 @@ contract ReflectionTokenFactory is Ownable {
         uint liquidityAmount,
         uint burnAmount
     ) external payable {
-        require(feeToken.transferFrom(msg.sender, burnAddress, feeAmount));
+        feeToken.safeTransferFrom(msg.sender, burnAddress, feeAmount);
 
         bytes32 salt = keccak256(abi.encodePacked(msg.sender));
         ReflectionToken token = new ReflectionToken{salt: salt}(
@@ -93,27 +101,26 @@ contract ReflectionTokenFactory is Ownable {
         token.enableBotProtection();
         lockTokenContract(token, timelockDelay);
 
-        console.log(address(token));
-
         emit CreateToken(address(token), msg.sender);
     }
 
     function initializeToken(ReflectionToken token, uint liquidityTimelockDelay) private {
         require(liquidityTimelockDelay >= 26 weeks, "ReflectionTokenFactory: liquidityTimelockDelay must be at least 6 months");
 
-        bytes32 salt = keccak256(abi.encodePacked(address(token)));
-        TokenTimelock liquidityTimelock = new TokenTimelock{salt: salt}(
-          token,
-          msg.sender,
-          block.timestamp + liquidityTimelockDelay
+        address liquidityTimelockAddress = tokenTimelockFactory.createTokenTimelock(
+            IERC20(token.uniswapV2Pair()),
+            msg.sender,
+            block.timestamp.add(liquidityTimelockDelay)
         );
 
-        token.initialize(address(liquidityTimelock));
+        address vaultAddress = vaultFactory.createVault(address(token));
+
+        token.initialize(liquidityTimelockAddress, vaultAddress);
     }
 
     function burnTokens(ReflectionToken token, uint amount) private {
         if (amount != 0) {
-            token.transfer(burnAddress, amount);
+            token.safeTransfer(burnAddress, amount);
         }
     }
 
@@ -136,11 +143,10 @@ contract ReflectionTokenFactory is Ownable {
     }
 
     function lockRemainingTokens(ReflectionToken token, uint timelockDelay) private {
-        address vaultAddress = vaultFactory.createVault(address(token));
-        IOwnable vault = IOwnable(vaultAddress);
+        IOwnable vault = IOwnable(token.vaultAddress());
 
         token.excludeFromFee(address(vault));
-        token.transfer(address(vault), token.balanceOf(address(this)));
+        token.safeTransfer(address(vault), token.balanceOf(address(this)));
 
         address timelockAddress = timelockFactory.createTimelock(address(vault), msg.sender, timelockDelay);
         vault.transferOwnership(timelockAddress);

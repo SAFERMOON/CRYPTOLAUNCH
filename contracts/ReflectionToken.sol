@@ -51,6 +51,7 @@ contract ReflectionToken is Context, IERC20, Ownable, Initializable, BotProtecti
     uint256 public numTokensSellToAddToLiquidity;
 
     address public liquidityTimelockAddress;
+    address public vaultAddress;
 
     event TaxFeeUpdated(uint256 taxFee);
     event LiquidityFeeUpdated(uint256 liquidityFee);
@@ -95,8 +96,7 @@ contract ReflectionToken is Context, IERC20, Ownable, Initializable, BotProtecti
 
         _rOwned[_msgSender()] = _rTotal;
 
-        // IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(0x10ED43C718714eb63d5aA57B78B54704E256024E);
-        IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(0xD99D1c33F9fC3444f8101754aBC46c52416550D1);
+        IUniswapV2Router02 _uniswapV2Router = IUniswapV2Router02(0x10ED43C718714eb63d5aA57B78B54704E256024E);
          // Create a uniswap pair for this new token
         uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory())
             .createPair(address(this), _uniswapV2Router.WETH());
@@ -113,8 +113,9 @@ contract ReflectionToken is Context, IERC20, Ownable, Initializable, BotProtecti
         emit Transfer(address(0), _msgSender(), _tTotal);
     }
 
-    function initialize(address _liquidityTimelockAddress) external initializer onlyOwner {
+    function initialize(address _liquidityTimelockAddress, address _vaultAddress) external initializer onlyOwner {
         liquidityTimelockAddress = _liquidityTimelockAddress;
+        vaultAddress = _vaultAddress;
     }
 
     function name() public view returns (string memory) {
