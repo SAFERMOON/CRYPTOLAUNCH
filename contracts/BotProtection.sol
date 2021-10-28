@@ -39,6 +39,7 @@ abstract contract BotProtection is Ownable {
     function allowTransfers(address sender) external onlyOwner {
         require(block.timestamp >= launchTime, "BotProtection: before launch");
         uint index = blockedIndex[sender];
+        delete blockedIndex[sender];
         address last = blocked[blocked.length - 1];
         blockedIndex[last] = index;
         blocked[index] = last;
