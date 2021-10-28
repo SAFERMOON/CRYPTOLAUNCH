@@ -79,21 +79,35 @@ describe("ReflectionToken", () => {
       expect(await token._excludedFromFee(0)).to.equal(owner.address);
       expect(await token._excludedFromFee(1)).to.equal(token.address);
     });
+
+    it("limits the prelaunch period to 1 week", async () => {
+      await expect(Token.deploy(
+        "Token",
+        "TOKEN",
+        BigNumber.from(5000000).mul(10**6).mul(10**9),
+        BigNumber.from(500000).mul(10**6).mul(10**9),
+        5,
+        5,
+        (await ethers.provider.getBlock()).timestamp + 604860,
+      )).to.be.revertedWith("BotProtection: launch time must be within 1 week");
+    });
   });
 
   describe("initialize", () => {
     it("can only be called by the owner", async () => {
-      await expect(token.connect(account).initialize(account.address)).to.be.revertedWith("Ownable: caller is not the owner");
+      await expect(token.connect(account).initialize(owner.address, account.address)).to.be.revertedWith("Ownable: caller is not the owner");
     });
 
     it("sets state variables", async () => {
-      await token.initialize(owner.address);
+      await token.initialize(owner.address, account.address);
+
       expect(await token.liquidityTimelockAddress()).to.equal(owner.address);
+      expect(await token.vaultAddress()).to.equal(account.address);
     });
 
     it("can only called once", async () => {
-      await token.initialize(owner.address);
-      await expect(token.initialize(owner.address)).to.be.revertedWith("Initializable: contract is already initialized");
+      await token.initialize(owner.address, account.address);
+      await expect(token.initialize(owner.address, account.address)).to.be.revertedWith("Initializable: contract is already initialized");
     });
   });
 
@@ -106,7 +120,7 @@ describe("ReflectionToken", () => {
       await token.transfer(account.address, BigNumber.from(100000000).mul(10**6).mul(10**9));
 
       expect(await token.blockedLength()).to.equal(1);
-      expect(await token.blocked(0)).to.equal(account.address);
+      expect(await token.blocked(await token.blockedIndex(account.address))).to.equal(account.address);
       await expect(token.connect(account).transfer(owner.address, BigNumber.from(50000000).mul(10**6).mul(10**9))).to.be.revertedWith("BotProtection: transfers blocked");
 
       await token.connect(account).approve(other.address, BigNumber.from(50000000).mul(10**6).mul(10**9));
@@ -135,7 +149,7 @@ describe("ReflectionToken", () => {
       await token.connect(other).transferFrom(owner.address, account.address, BigNumber.from(100000000).mul(10**6).mul(10**9));
 
       expect(await token.blockedLength()).to.equal(1);
-      expect(await token.blocked(0)).to.equal(account.address);
+      expect(await token.blocked(await token.blockedIndex(account.address))).to.equal(account.address);
       await expect(token.connect(account).transfer(owner.address, BigNumber.from(50000000).mul(10**6).mul(10**9))).to.be.revertedWith("BotProtection: transfers blocked");
 
       await token.connect(account).approve(other.address, BigNumber.from(50000000).mul(10**6).mul(10**9));
@@ -233,8 +247,8 @@ describe("ReflectionToken", () => {
       expect(await token.transfersBlocked(account.address)).to.equal(true);
       expect(await token.transfersBlocked(other.address)).to.equal(true);
       expect(await token.blockedLength()).to.equal(2);
-      expect(await token.blocked(0)).to.equal(account.address);
-      expect(await token.blocked(1)).to.equal(other.address);
+      expect(await token.blocked(await token.blockedIndex(account.address))).to.equal(account.address);
+      expect(await token.blocked(await token.blockedIndex(other.address))).to.equal(other.address);
 
       await expect(token.allowTransfers(account.address)).to.be.revertedWith("BotProtection: before launch");
 
@@ -244,7 +258,7 @@ describe("ReflectionToken", () => {
       expect(await token.transfersBlocked(account.address)).to.equal(false);
       expect(await token.transfersBlocked(other.address)).to.equal(true);
       expect(await token.blockedLength()).to.equal(1);
-      expect(await token.blocked(0)).to.equal(other.address);
+      expect(await token.blocked(await token.blockedIndex(other.address))).to.equal(other.address);
     });
   });
 });

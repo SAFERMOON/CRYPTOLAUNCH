@@ -51,6 +51,9 @@ describe("ReflectionTokenFactory", () => {
   let other;
 
   beforeEach(async () => {
+    TokenTimelockFactory = await ethers.getContractFactory("TokenTimelockFactory");
+    tokenTimelockFactory = await TokenTimelockFactory.deploy();
+
     TimelockFactory = await ethers.getContractFactory("TimelockFactory");
     timelockFactory = await TimelockFactory.deploy();
 
@@ -64,10 +67,10 @@ describe("ReflectionTokenFactory", () => {
     const feeAmount = BigNumber.from("10000000000").mul(10**9);
     Factory = await ethers.getContractFactory("ReflectionTokenFactory");
     factory = await Factory.deploy(
+      tokenTimelockFactory.address,
       timelockFactory.address,
       vaultFactory.address,
-      // "0x10ED43C718714eb63d5aA57B78B54704E256024E",
-      "0xD99D1c33F9fC3444f8101754aBC46c52416550D1",
+      "0x10ED43C718714eb63d5aA57B78B54704E256024E",
       "0x000000000000000000000000000000000000dEaD",
       token.address,
       feeAmount,
@@ -77,8 +80,7 @@ describe("ReflectionTokenFactory", () => {
     TokenTimelock = await ethers.getContractFactory("TokenTimelock");
     Vault = await ethers.getContractFactory("Vault");
     Timelock = await ethers.getContractFactory("Timelock");
-    // weth = await ethers.getContractAt("IERC20", "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c");
-    weth = await ethers.getContractAt("IERC20", "0xae13d989dac2f0debff460ac112a837c89baa7cd");
+    weth = await ethers.getContractAt("IERC20", "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c");
 
     [owner, account, other] = await ethers.getSigners();
 
@@ -155,7 +157,6 @@ describe("ReflectionTokenFactory", () => {
 
   describe("createToken", () => {
     let getTokenAddress;
-    let getVaultAddress;
     let getTimelockAddress;
 
     beforeEach(() => {
@@ -173,14 +174,6 @@ describe("ReflectionTokenFactory", () => {
         ],
         args,
         account,
-      );
-
-      getVaultAddress = (token) => getAddress(
-        vaultFactory,
-        Vault,
-        ["address"],
-        [token.address],
-        token,
       );
 
       getTimelockAddress = (token) => getAddress(
@@ -360,9 +353,30 @@ describe("ReflectionTokenFactory", () => {
       const liquidityTimelock = TokenTimelock.attach(await token.liquidityTimelockAddress());
       const { timestamp } = await ethers.provider.getBlock();
 
-      expect(await liquidityTimelock.token()).to.equal(token.address);
+      expect(await liquidityTimelock.token()).to.equal(await token.uniswapV2Pair());
       expect(await liquidityTimelock.beneficiary()).to.equal(account.address);
       expect(await liquidityTimelock.releaseTime()).to.equal(timestamp + liquidityTimelockDelay);
+    });
+
+    it("initializes the token with a vault", async () => {
+      const tokenArgs = await getTokenArgs();
+      const timelockDelay = 86400;
+      const liquidityTimelockDelay = 15724800;
+      const liquidityAmount = BigNumber.from(100000000).mul(10**6).mul(10**9);
+      const burnAmount = 0;
+      const value = ethers.utils.parseEther("10");
+      await factory.connect(account).createToken(
+        ...tokenArgs,
+        timelockDelay,
+        liquidityTimelockDelay,
+        liquidityAmount,
+        burnAmount,
+        { value },
+      );
+      const token = Token.attach(getTokenAddress(tokenArgs));
+      const vault = Vault.attach(await token.vaultAddress());
+
+      expect(await vault.token()).to.equal(token.address);
     });
 
     it("burns tokens", async () => {
@@ -441,9 +455,11 @@ describe("ReflectionTokenFactory", () => {
         { value },
       );
       const token = Token.attach(getTokenAddress(tokenArgs));
+      uniswapV2Pair = await ethers.getContractAt("IERC20", await token.uniswapV2Pair());
 
-      expect(await token.balanceOf(await token.uniswapV2Pair())).to.equal(liquidityAmount);
-      expect(await weth.balanceOf(await token.uniswapV2Pair())).to.equal(value);
+      expect(await token.balanceOf(uniswapV2Pair.address)).to.equal(liquidityAmount);
+      expect(await weth.balanceOf(uniswapV2Pair.address)).to.equal(value);
+      expect(await uniswapV2Pair.balanceOf(await token.liquidityTimelockAddress())).to.be.above(0);
     });
 
     it("excludes the liquidity pool from rewards", async () => {
@@ -484,7 +500,7 @@ describe("ReflectionTokenFactory", () => {
       );
       const token = Token.attach(getTokenAddress(tokenArgs));
 
-      expect(await token.isExcludedFromFee(getVaultAddress(token))).to.equal(true);
+      expect(await token.isExcludedFromFee(await token.vaultAddress())).to.equal(true);
     });
 
     it("sends remaining tokens to the vault", async () => {
@@ -504,7 +520,7 @@ describe("ReflectionTokenFactory", () => {
       );
       const token = Token.attach(getTokenAddress(tokenArgs));
 
-      expect(await token.balanceOf(getVaultAddress(token))).to.equal(BigNumber.from(800000000).mul(10**6).mul(10**9));
+      expect(await token.balanceOf(await token.vaultAddress())).to.equal(BigNumber.from(800000000).mul(10**6).mul(10**9));
     });
 
     it("transfers ownership of the vault to a timelock", async () => {
@@ -523,7 +539,7 @@ describe("ReflectionTokenFactory", () => {
         { value },
       );
       const token = Token.attach(getTokenAddress(tokenArgs));
-      const vault = Vault.attach(getVaultAddress(token));
+      const vault = Vault.attach(await token.vaultAddress());
       const vaultTimelock = Timelock.attach(getTimelockAddress(vault));
 
       expect(await vault.owner()).to.equal(vaultTimelock.address);
@@ -570,7 +586,7 @@ describe("ReflectionTokenFactory", () => {
         { value },
       );
       const token = Token.attach(getTokenAddress(tokenArgs));
-      const vault = Vault.attach(getVaultAddress(token));
+      const vault = Vault.attach(await token.vaultAddress());
       const vaultTimelock = Timelock.attach(getTimelockAddress(vault));
 
       expect(await token.balanceOf(await factory.burnAddress())).to.be.above(0);

@@ -8,9 +8,13 @@ abstract contract BotProtection is Ownable {
     uint public immutable launchTime;
     bool public botProtectionEnabled;
     mapping(address => bool) public transfersBlocked;
+    mapping(address => uint) public blockedIndex;
     address[] public blocked;
 
+    uint public constant MAX_PRELAUNCH_PERIOD = 1 weeks;
+
     constructor(uint _launchTime) {
+        require(_launchTime <= block.timestamp + MAX_PRELAUNCH_PERIOD, "BotProtection: launch time must be within 1 week");
         launchTime = _launchTime;
     }
 
@@ -20,6 +24,7 @@ abstract contract BotProtection is Ownable {
 
             if (block.timestamp < launchTime && !transfersBlocked[recipient]) {
                 transfersBlocked[recipient] = true;
+                blockedIndex[recipient] = blocked.length;
                 blocked.push(recipient);
             }
         }
@@ -33,15 +38,12 @@ abstract contract BotProtection is Ownable {
 
     function allowTransfers(address sender) external onlyOwner {
         require(block.timestamp >= launchTime, "BotProtection: before launch");
-
-        for (uint i = 0; i < blocked.length; i++) {
-            if (blocked[i] == sender) {
-                blocked[i] = blocked[blocked.length - 1];
-                blocked.pop();
-
-                delete transfersBlocked[sender];
-            }
-        }
+        uint index = blockedIndex[sender];
+        address last = blocked[blocked.length - 1];
+        blockedIndex[last] = index;
+        blocked[index] = last;
+        blocked.pop();
+        delete transfersBlocked[sender];
     }
 
     function blockedLength() external view returns (uint) {
